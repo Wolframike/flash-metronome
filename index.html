@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Flash Metronome</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }
+  body { font-family: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif; touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+  #stage { position: fixed; inset: 0; background: #000; }
+  #stage.on { background: #fff; }
+  #hud {
+    position: fixed;
+    bottom: max(env(safe-area-inset-bottom), 16px);
+    right: max(env(safe-area-inset-right), 16px);
+    color: #888;
+    mix-blend-mode: difference;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.3;
+    opacity: 0;
+    transition: opacity 400ms ease;
+    pointer-events: none;
+    text-align: right;
+    user-select: none;
+  }
+  #hud.visible { opacity: 1; }
+  #bpm { font-size: 22px; color: #ccc; }
+  #hint { font-size: 11px; color: #777; margin-top: 2px; }
+  @media (pointer: coarse) and (hover: none) {
+    #hint .kbd { display: none; }
+  }
+  #err {
+    position: fixed;
+    top: max(env(safe-area-inset-top), 16px);
+    left: 50%;
+    transform: translateX(-50%);
+    color: #d44;
+    mix-blend-mode: difference;
+    font-size: 12px;
+    opacity: 0;
+    transition: opacity 500ms ease;
+    pointer-events: none;
+    user-select: none;
+  }
+  #err.visible { opacity: 1; }
+</style>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="hud">
+    <div id="bpm">120 BPM</div>
+    <div id="hint"><span>tap: tempo</span><span class="kbd"> &middot; &uarr;&darr; &plusmn;1 &middot; &larr;&rarr; &plusmn;10 &middot; space: pause</span></div>
+  </div>
+  <div id="err"></div>
+<script>
+(() => {
+  const MIN_BPM = 30, MAX_BPM = 300, DEFAULT_BPM = 120;
+  const TAP_RESET_MS = 2000;
+  const TAP_MAX_HISTORY = 6;
+  const stage = document.getElementById('stage');
+  const bpmEl = document.getElementById('bpm');
+  const hud = document.getElementById('hud');
+  const errEl = document.getElementById('err');
+
+  let bpm = DEFAULT_BPM;
+  let paused = false;
+  let hudTimer = 0;
+  let errTimer = 0;
+  let lastFlip = 0;
+  let state = false;
+  let tapTimes = [];
+  let wakeLock = null;
+  let wakeLockPending = false;
+
+  const clamp = (n) => Math.max(MIN_BPM, Math.min(MAX_BPM, n));
+
+  async function requestWakeLock() {
+    if (!('wakeLock' in navigator) || wakeLock || wakeLockPending) return;
+    wakeLockPending = true;
+    try {
+      const lock = await navigator.wakeLock.request('screen');
+      wakeLock = lock;
+      lock.addEventListener('release', () => {
+        if (wakeLock === lock) wakeLock = null;
+      });
+    } catch (_) {
+      /* not granted; ignore */
+    } finally {
+      wakeLockPending = false;
+    }
+  }
+
+  function parseHash() {
+    const rawEncoded = location.hash.slice(1);
+    let raw;
+    try {
+      raw = decodeURIComponent(rawEncoded).trim();
+    } catch (_) {
+      return { bpm: DEFAULT_BPM, error: `invalid BPM "${rawEncoded}" — using ${DEFAULT_BPM}` };
+    }
+    if (!raw) return { bpm: DEFAULT_BPM, error: null };
+    if (!/^\d+$/.test(raw)) {
+      return { bpm: DEFAULT_BPM, error: `invalid BPM "${raw}" — using ${DEFAULT_BPM}` };
+    }
+    const n = Number(raw);
+    const c = clamp(n);
+    if (c !== n) return { bpm: c, error: `BPM clamped to ${c}` };
+    return { bpm: c, error: null };
+  }
+
+  function showHud() {
+    hud.classList.add('visible');
+    clearTimeout(hudTimer);
+    hudTimer = setTimeout(() => hud.classList.remove('visible'), 2000);
+  }
+
+  function showErr(msg) {
+    errEl.textContent = msg;
+    errEl.classList.add('visible');
+    clearTimeout(errTimer);
+    errTimer = setTimeout(() => errEl.classList.remove('visible'), 3000);
+  }
+
+  function renderBpm() {
+    bpmEl.textContent = paused ? `${bpm} BPM · paused` : `${bpm} BPM`;
+  }
+
+  function writeHash() {
+    history.replaceState(null, '', `#${bpm}`);
+  }
+
+  function setBpm(n) {
+    const c = clamp(n);
+    if (c === bpm) { showHud(); return; }
+    bpm = c;
+    renderBpm();
+    showHud();
+    writeHash();
+  }
+
+  function handleTap(now) {
+    requestWakeLock();
+    if (tapTimes.length && now - tapTimes[tapTimes.length - 1] > TAP_RESET_MS) {
+      tapTimes = [];
+    }
+    tapTimes.push(now);
+    if (tapTimes.length > TAP_MAX_HISTORY) tapTimes.shift();
+    showHud();
+    if (tapTimes.length < 2) return;
+    const span = tapTimes[tapTimes.length - 1] - tapTimes[0];
+    const avgInterval = span / (tapTimes.length - 1);
+    const newBpm = Math.round(60000 / avgInterval);
+    paused = false;
+    setBpm(newBpm);
+    renderBpm();
+    state = true;
+    stage.classList.add('on');
+    lastFlip = now;
+  }
+
+  function applyHash() {
+    const { bpm: b, error } = parseHash();
+    bpm = b;
+    if (error) showErr(error);
+    renderBpm();
+    showHud();
+  }
+
+  function tick(now) {
+    if (!paused) {
+      const halfMs = 30000 / bpm;
+      if (lastFlip === 0) {
+        lastFlip = now;
+      } else if (now - lastFlip >= halfMs) {
+        state = !state;
+        stage.classList.toggle('on', state);
+        lastFlip += halfMs;
+        if (now - lastFlip > halfMs * 2) lastFlip = now;
+      }
+    } else {
+      lastFlip = 0;
+    }
+    requestAnimationFrame(tick);
+  }
+
+  applyHash();
+  requestAnimationFrame(tick);
+
+  window.addEventListener('hashchange', applyHash);
+  window.addEventListener('mousemove', showHud, { passive: true });
+  window.addEventListener('pointerdown', (e) => {
+    handleTap(performance.now());
+    e.preventDefault();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') requestWakeLock();
+  });
+
+  window.addEventListener('keydown', (e) => {
+    requestWakeLock();
+    switch (e.key) {
+      case 'ArrowUp':    setBpm(bpm + 1);  e.preventDefault(); break;
+      case 'ArrowDown':  setBpm(bpm - 1);  e.preventDefault(); break;
+      case 'ArrowRight': setBpm(bpm + 10); e.preventDefault(); break;
+      case 'ArrowLeft':  setBpm(bpm - 10); e.preventDefault(); break;
+      case ' ':
+      case 'Spacebar':
+        paused = !paused;
+        renderBpm();
+        showHud();
+        e.preventDefault();
+        break;
+    }
+  });
+})();
+</script>
+</body>
+</html>
