@@ -23,7 +23,7 @@
     transition: filter 70ms ease-out;
   }
   #pendulum.beat {
-    filter: brightness(1.35) drop-shadow(0 0 6px rgba(255, 220, 130, 0.6));
+    filter: brightness(1.55) drop-shadow(0 0 10px rgba(255, 215, 110, 0.85));
   }
   #pendulum::before {
     content: '';
@@ -47,12 +47,12 @@
     border-radius: 50%;
     background: #f0f0f0;
     box-shadow: 0 0 20px rgba(240, 240, 240, 0.45);
-    transition: transform 70ms ease-out, box-shadow 70ms ease-out, background 70ms ease-out;
+    transition: transform 90ms ease-out, box-shadow 90ms ease-out, background 90ms ease-out;
   }
   #pendulum.beat::after {
-    transform: translateX(-50%) scale(1.7);
-    background: #ffd966;
-    box-shadow: 0 0 45px rgba(255, 215, 110, 1), 0 0 90px rgba(255, 195, 80, 0.55);
+    transform: translateX(-50%) scale(2.4);
+    background: #ffbf2b;
+    box-shadow: 0 0 65px rgba(255, 190, 70, 1), 0 0 130px rgba(255, 170, 50, 0.7);
   }
   #pulse-ring {
     position: absolute;
@@ -66,11 +66,30 @@
     pointer-events: none;
   }
   #pulse-ring.fire {
-    animation: ringPulse 320ms cubic-bezier(0.2, 0.6, 0.3, 1) forwards;
+    animation: ringPulse 520ms cubic-bezier(0.18, 0.7, 0.3, 1) forwards;
   }
   @keyframes ringPulse {
-    0%   { transform: translateX(-50%) scale(0.5);  border-color: rgba(255, 215, 110, 1);   border-width: 5px; }
-    100% { transform: translateX(-50%) scale(5.2);  border-color: rgba(255, 215, 110, 0);   border-width: 1px; }
+    0%   { transform: translateX(-50%) scale(0.35); border-color: rgba(255, 195, 80, 1);   border-width: 7px; }
+    50%  { transform: translateX(-50%) scale(4);    border-color: rgba(255, 195, 80, 0.55); border-width: 3px; }
+    100% { transform: translateX(-50%) scale(9);    border-color: rgba(255, 195, 80, 0);   border-width: 1px; }
+  }
+  #beat-flash {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(circle at center,
+      rgba(255, 195, 80, 0.32) 0%,
+      rgba(255, 195, 80, 0.10) 40%,
+      rgba(255, 195, 80, 0) 78%);
+    opacity: 0;
+    will-change: opacity;
+  }
+  #beat-flash.fire {
+    animation: flashFade 360ms cubic-bezier(0.2, 0.5, 0.4, 1) forwards;
+  }
+  @keyframes flashFade {
+    0%   { opacity: 1; }
+    100% { opacity: 0; }
   }
   #hud {
     position: fixed;
@@ -109,6 +128,7 @@
 </style>
 </head>
 <body>
+  <div id="beat-flash"></div>
   <div id="pendulum"><div id="pulse-ring"></div></div>
   <div id="hud">
     <div id="bpm">120 BPM</div>
@@ -121,10 +141,11 @@
   const TAP_RESET_MS = 2000;
   const TAP_MAX_HISTORY = 6;
   const MAX_ANGLE_DEG = 28;
-  const BEAT_CLASS_MS = 70;
-  const DWELL_HALF = 0.035;
+  const BEAT_CLASS_MS = 140;
+  const DWELL_HALF = 0.05;
   const pendulum = document.getElementById('pendulum');
   const pulseRing = document.getElementById('pulse-ring');
+  const beatFlash = document.getElementById('beat-flash');
   const bpmEl = document.getElementById('bpm');
   const hud = document.getElementById('hud');
   const errEl = document.getElementById('err');
@@ -274,8 +295,10 @@
     clearTimeout(beatClassTimer);
     beatClassTimer = setTimeout(() => pendulum.classList.remove('beat'), BEAT_CLASS_MS);
     pulseRing.classList.remove('fire');
+    beatFlash.classList.remove('fire');
     void pulseRing.offsetWidth;
     pulseRing.classList.add('fire');
+    beatFlash.classList.add('fire');
   }
 
   function tick(now) {
